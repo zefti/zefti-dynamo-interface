@@ -1,0 +1,9 @@
+{
+  "name": "zefti-dynamo-interface",
+  "description": "Zefti Dynamo Interface",
+  "author": "Ryan Ogle",
+  "dependencies": {
+  },
+  "private": false,
+  "version": "0.0.1"
+}
