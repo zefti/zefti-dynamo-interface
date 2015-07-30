@@ -1,4 +1,18 @@
 var utils = require('zefti-utils');
+var common = require('zefti-common');
+
+/*  EXAMPLE QUERY
+var params = {
+  IndexName : 'recipient-ts-index'
+  , TableName : this.tableName
+  , KeyConditionExpression : 'recipient = :xyz'
+  , ExpressionAttributeValues : {
+    ":xyz" : {
+      S : "4dff4ea340f0a823f15d3f4f01ab62eae0e5da579ccb851f8db9dfe84c58b2b37b89903a740e1ee172da793a6e79d560e5f7f9bd058a12a280433ed6fa46510a"
+    }
+  }
+};
+*/
 
 
 var typeMap = {
@@ -9,8 +23,6 @@ var typeMap = {
 }
 
 var Dynamo = function(db, options){
-  console.log('options are::');
-  console.log(options);
   this.db = db;
   if (options.tableName) this.tableName = options.tableName;
   return this;
@@ -28,8 +40,7 @@ function createItem(hash){
 }
 
 Dynamo.prototype.create = function(hash, options, cb){
-  console.log('inside 2nd create')
-  var intArgs = mongo3Arguments(arguments);
+  var intArgs = common.process3Arguments(arguments)
   var item = createItem(intArgs[0]);
   var params = {
       Item : item
@@ -37,18 +48,72 @@ Dynamo.prototype.create = function(hash, options, cb){
   };
 
   this.db.putItem(params, function(err, data) {
-    console.log('err');
-    console.log(err);
-    console.log('data');
-    console.log(data);
     return cb(err, data);
   });
 
 
 };
 
-Dynamo.prototype.find = function(hash, fieldMask, options, cb){
 
+var expressionMap = {
+    "$gt" : " > :"
+  , "$lt" : " < :"
+  , "$gte" : " >= :"
+  , "$lte" : " <= :"
+};
+
+
+function formatQuery(hash){
+  var expression = "";
+  var attributes = {};
+  var i = 0;
+  for (var key in hash) {
+    i++;
+    if (i>1) expression += ' AND ';
+    expression += key;
+
+    if (utils.type(hash[key]) === 'string') {
+      expression +=  ' = :';
+      attributes[':'+key] = {};
+      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key];
+    } else {
+      for (var key2 in hash[key]) {
+        expression += expressionMap[key2];
+        attributes[':'+key] = {};
+        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2];
+      }
+    }
+    expression += key;
+  }
+  return {expression:expression, attributes:attributes};
+}
+
+Dynamo.prototype.find = function(hash, fieldMask, options, cb){
+//TODO: fix the arguments
+  var intArgs = common.process4DbArguments(arguments);
+  var item = createItem(intArgs[0]);
+  var query = formatQuery(hash);
+  var params = {
+      IndexName: options.index
+    , TableName: this.tableName
+    , KeyConditionExpression: query.expression
+    , ExpressionAttributeValues: query.attributes
+  };
+
+  this.db.query(params, function(err, data){
+    var cleanData = [];
+
+    data.Items.forEach(function(item){
+      var dataObj = {};
+      for (var key in item) {
+        for (var key2 in item[key]) {
+          dataObj[key] = item[key][key2];
+        }
+      }
+      cleanData.push(dataObj);
+    });
+    cb(err, cleanData);
+  });
 };
 
 Dynamo.prototype.findAndModify = function(hash, sort, update, options, cb){
@@ -119,31 +184,7 @@ Dynamo.prototype.expireById = function(id, options, cb){
 Dynamo.prototype.getNewId = function(options){
 
 };
-function mongo5Arguments(arguments){
-  return mongoArguments(arguments, 5);
-}
 
-function mongo4Arguments(arguments){
-  return mongoArguments(arguments, 4);
-}
-
-function mongo3Arguments(arguments){
-  return mongoArguments(arguments, 3);
-}
-
-function mongoArguments(arguments, num){
-  var intArgs = [];
-  var newArgs = Array.prototype.slice.call(arguments);
-  if (newArgs.length === num) return newArgs;
-  if (newArgs.length > 1) {
-    intArgs[num-1] = newArgs.splice([newArgs.length - 1])[0] || function(){};
-    num -= 1;
-  }
-  for(var i=0;i<num; i++){
-    intArgs[i] = newArgs[i] || {};
-  }
-  return intArgs;
-}
 
 
 
