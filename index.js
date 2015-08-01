@@ -40,7 +40,7 @@ function createItem(hash){
 }
 
 Dynamo.prototype.create = function(hash, options, cb){
-  var intArgs = common.process3Arguments(arguments)
+  var intArgs = common.process3DbArguments(arguments)
   var item = createItem(intArgs[0]);
   var params = {
       Item : item
@@ -75,18 +75,21 @@ function formatQuery(hash){
     if (utils.type(hash[key]) === 'string') {
       expression +=  ' = :';
       attributes[':'+key] = {};
-      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key];
+      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key].toString();
     } else {
       for (var key2 in hash[key]) {
         expression += expressionMap[key2];
         attributes[':'+key] = {};
-        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2];
+        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2].toString();
       }
     }
     expression += key;
   }
   return {expression:expression, attributes:attributes};
 }
+
+
+
 
 Dynamo.prototype.find = function(hash, fieldMask, options, cb){
 //TODO: fix the arguments
@@ -100,7 +103,14 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
     , ExpressionAttributeValues: query.attributes
   };
 
+
+  console.log('params to dynamo:');
+  console.log(params);
+
   this.db.query(params, function(err, data){
+    console.log(err);
+    console.log(data);
+    if (err) return cb(err, null);
     var cleanData = [];
 
     data.Items.forEach(function(item){
@@ -115,6 +125,13 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
     cb(err, cleanData);
   });
 };
+
+/*
+ , Limit : 9
+ , ExclusiveStartKey : { ts: { N: '1438153408999' },
+ connection: { S: 'd5436964ccd629b72910317c0bbea189' },
+ recipient: { S: '40b244112641dd78dd4f93b6c9190dd46e0099194d5a44257b7efad6ef9ff4683da1eda0244448cb343aa688f5d3efd7314dafe580ac0bcbf115aeca9e8dc114' } }
+ */
 
 Dynamo.prototype.findAndModify = function(hash, sort, update, options, cb){
 
