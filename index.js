@@ -20,7 +20,14 @@ var typeMap = {
   , number : 'N'
   , boolean : 'BOOL'
   , null : 'NULL'
-}
+};
+
+var expressionMap = {
+  "$gt" : " > :"
+  , "$lt" : " < :"
+  , "$gte" : " >= :"
+  , "$lte" : " <= :"
+};
 
 var Dynamo = function(db, options){
   this.db = db;
@@ -55,41 +62,6 @@ Dynamo.prototype.create = function(hash, options, cb){
 };
 
 
-var expressionMap = {
-    "$gt" : " > :"
-  , "$lt" : " < :"
-  , "$gte" : " >= :"
-  , "$lte" : " <= :"
-};
-
-
-function formatQuery(hash){
-  var expression = "";
-  var attributes = {};
-  var i = 0;
-  for (var key in hash) {
-    i++;
-    if (i>1) expression += ' AND ';
-    expression += key;
-
-    if (utils.type(hash[key]) === 'string') {
-      expression +=  ' = :';
-      attributes[':'+key] = {};
-      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key].toString();
-    } else {
-      for (var key2 in hash[key]) {
-        expression += expressionMap[key2];
-        attributes[':'+key] = {};
-        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2].toString();
-      }
-    }
-    expression += key;
-  }
-  return {expression:expression, attributes:attributes};
-}
-
-
-
 
 Dynamo.prototype.find = function(hash, fieldMask, options, cb){
 //TODO: fix the arguments
@@ -101,8 +73,18 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
     , TableName: this.tableName
     , KeyConditionExpression: query.expression
     , ExpressionAttributeValues: query.attributes
+    , Limit : 4
+    , ExclusiveStartKey : { ts: { N: '1438408155117' },
+      connection: { S: '0b8c7b942eb6805e1687843d86f12ba9' },
+      recipient: { S: '40b244112641dd78dd4f93b6c9190dd46e0099194d5a44257b7efad6ef9ff4683da1eda0244448cb343aa688f5d3efd7314dafe580ac0bcbf115aeca9e8dc114' },
+    }
   };
 
+  var paramsTest = {
+    TableName: 'hatch_dev',
+    KeyConditionExpression: 'connection = :connection',
+    ExpressionAttributeValues: { ':connection': { S: 'd5436964ccd629b72910317c0bbea189' } },
+    Limit: 1 }
 
   console.log('params to dynamo:');
   console.log(params);
@@ -207,3 +189,29 @@ Dynamo.prototype.getNewId = function(options){
 
 
 module.exports = Dynamo;
+
+
+function formatQuery(hash){
+  var expression = "";
+  var attributes = {};
+  var i = 0;
+  for (var key in hash) {
+    i++;
+    if (i>1) expression += ' AND ';
+    expression += key;
+
+    if (utils.type(hash[key]) === 'string') {
+      expression +=  ' = :';
+      attributes[':'+key] = {};
+      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key].toString();
+    } else {
+      for (var key2 in hash[key]) {
+        expression += expressionMap[key2];
+        attributes[':'+key] = {};
+        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2].toString();
+      }
+    }
+    expression += key;
+  }
+  return {expression:expression, attributes:attributes};
+}
