@@ -73,11 +73,6 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
     , TableName: this.tableName
     , KeyConditionExpression: query.expression
     , ExpressionAttributeValues: query.attributes
-    , Limit : 4
-    , ExclusiveStartKey : { ts: { N: '1438408155117' },
-      connection: { S: '0b8c7b942eb6805e1687843d86f12ba9' },
-      recipient: { S: '40b244112641dd78dd4f93b6c9190dd46e0099194d5a44257b7efad6ef9ff4683da1eda0244448cb343aa688f5d3efd7314dafe580ac0bcbf115aeca9e8dc114' },
-    }
   };
 
   var paramsTest = {
