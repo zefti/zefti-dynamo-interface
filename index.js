@@ -1,5 +1,8 @@
 var utils = require('zefti-utils');
 var common = require('zefti-common');
+var uuid = require('node-uuid');
+var randtoken = require('rand-token');
+
 
 /*  EXAMPLE QUERY
 var params = {
@@ -86,7 +89,6 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
 
   this.db.query(params, function(err, data){
     console.log(err);
-    console.log(data);
     if (err) return cb(err, null);
     var cleanData = [];
 
@@ -186,27 +188,59 @@ Dynamo.prototype.getNewId = function(options){
 module.exports = Dynamo;
 
 
+var z = {
+  ownerId: '40b244112641dd78dd4f93b6c9190dd46e0099194d5a44257b7efad6ef9ff4683da1eda0244448cb343aa688f5d3efd7314dafe580ac0bcbf115aeca9e8dc114',
+  ts: {
+    '$gt': 5,
+    '$lte': 1438579084354
+  }
+};
+
+var a = 'ownerId = :ownerId AND ts > : <= :ts'
+
 function formatQuery(hash){
   var expression = "";
   var attributes = {};
   var i = 0;
   for (var key in hash) {
+    var j = 0;
     i++;
     if (i>1) expression += ' AND ';
     expression += key;
 
     if (utils.type(hash[key]) === 'string') {
       expression +=  ' = :';
+      expression += key;
       attributes[':'+key] = {};
       attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key].toString();
     } else {
+      var counter = 0;
+      var values = {};
       for (var key2 in hash[key]) {
+        counter++;
+        values['n' + counter] = hash[key][key2];
+      }
+      if(counter === 1) {
         expression += expressionMap[key2];
+        expression += key;
         attributes[':'+key] = {};
-        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = hash[key][key2].toString();
+        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = values.n1.toString();
+      } else if (counter === 2) {
+        var x = randtoken.generate(8);
+        var y = randtoken.generate(8);
+        expression += ' BETWEEN :' + x;
+        expression += ' AND :' + y;
+        attributes[':'+x] = {};
+        attributes[':'+x][typeMap[utils.type(hash[key][key2])]] = values.n1.toString();
+        attributes[':'+y] = {};
+        attributes[':'+y][typeMap[utils.type(hash[key][key2])]] = values.n2.toString();
       }
     }
-    expression += key;
+
   }
+  console.log('EXPRESSION::::::')
+  console.log(expression);
+  console.log('ATTRIBUTES::::::');
+  console.log(attributes);
   return {expression:expression, attributes:attributes};
 }
