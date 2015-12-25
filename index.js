@@ -58,6 +58,8 @@ Dynamo.prototype.create = function(hash, options, cb){
   };
 
   this.db.putItem(params, function(err, data) {
+    console.log('dynamo create err:');
+    console.log(err);
     return cb(err, data);
   });
 
@@ -67,7 +69,7 @@ Dynamo.prototype.create = function(hash, options, cb){
 
 
 Dynamo.prototype.find = function(hash, fieldMask, options, cb){
-//TODO: fix the arguments
+//TODO: fix the arguments, use intArgs
   var intArgs = common.process4DbArguments(arguments);
   var item = createItem(intArgs[0]);
   var query = formatQuery(hash);
@@ -78,11 +80,7 @@ Dynamo.prototype.find = function(hash, fieldMask, options, cb){
     , ExpressionAttributeValues: query.attributes
   };
 
-  var paramsTest = {
-    TableName: 'hatch_dev',
-    KeyConditionExpression: 'connection = :connection',
-    ExpressionAttributeValues: { ':connection': { S: 'd5436964ccd629b72910317c0bbea189' } },
-    Limit: 1 }
+  if (options.limit) params.Limit = options.limit;
 
   console.log('params to dynamo:');
   console.log(params);
@@ -130,7 +128,31 @@ Dynamo.prototype.upsert = function(hash, update, options, cb){
 };
 
 Dynamo.prototype.update = function(hash, update, options, cb){
+  var dynamoKey = {};
+  var updateExpression = "SET";
+  console.log('hash:');
+  console.log(hash);
+  console.log('update:');
+  console.log(update)
+  for (var key in hash) {
+    dynamoKey[key][typeMap[utils.type(hash[key])]] = hash[key];
+  }
 
+  for (var key in update) {
+    updateExpression = updateExpression + " " + key + " = " + update[key];
+  }
+
+  console.log('update dynamoKey: ');
+  console.log(dynamoKey);
+  console.log('updateExpression: ');
+  console.log(updateExpression);
+
+  this.db.updateItem(dynamoKey, updateExpression, function(err, response){
+    console.log('^^^^^^^^^^');
+    console.log(err);
+    console.log(response);
+    console.log('^^^^^^^^^^')
+  });
 };
 
 Dynamo.prototype.updateById = function(id, update, options, cb){
@@ -208,7 +230,7 @@ function formatQuery(hash){
     if (i>1) expression += ' AND ';
     expression += key;
 
-    if (utils.type(hash[key]) === 'string') {
+    if (utils.type(hash[key]) === 'string' || utils.type(hash[key]) === 'number') {
       expression +=  ' = :';
       expression += key;
       attributes[':'+key] = {};
