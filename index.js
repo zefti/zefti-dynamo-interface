@@ -41,10 +41,12 @@ var Dynamo = function(db, options){
 function createItem(hash){
   var item = {};
   for (var key in hash) {
-    var someKey = {};
-    var type = typeMap[utils.type(hash[key])];
-    someKey[type] = hash[key].toString();
-    item[key] = someKey;
+    if (hash[key]) {
+      var someKey = {};
+      var type = typeMap[utils.type(hash[key])];
+      someKey[type] = hash[key].toString();
+      item[key] = someKey;
+    }
   }
   return item;
 }
@@ -58,8 +60,6 @@ Dynamo.prototype.create = function(hash, options, cb){
   };
 
   this.db.putItem(params, function(err, data) {
-    console.log('dynamo create err:');
-    console.log(err);
     return cb(err, data);
   });
 
