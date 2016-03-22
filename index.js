@@ -1,12 +1,11 @@
 var utils = require('zefti-utils');
-var common = require('zefti-common');
 var uuid = require('node-uuid');
 var randtoken = require('rand-token');
 
 
 /*  EXAMPLE QUERY
 var params = {
-  IndexName : 'recipient-ts-index'
+    IndexName : 'recipient-ts-index'
   , TableName : this.tableName
   , KeyConditionExpression : 'recipient = :xyz'
   , ExpressionAttributeValues : {
@@ -26,7 +25,7 @@ var typeMap = {
 };
 
 var expressionMap = {
-  "$gt" : " > :"
+    "$gt" : " > :"
   , "$lt" : " < :"
   , "$gte" : " >= :"
   , "$lte" : " <= :"
@@ -51,9 +50,19 @@ function createItem(hash){
   return item;
 }
 
-Dynamo.prototype.create = function(hash, options, cb){
-  var intArgs = common.process3DbArguments(arguments)
-  var item = createItem(intArgs[0]);
+Dynamo.prototype.info = function(cb){
+  this.db.describeTable({TableName:this.tableName}, function(err, result){
+    cb(err, result);
+  });
+};
+
+Dynamo.prototype.create = function(){
+  var intArgs = utils.resolve3Arguments(arguments);
+  //console.log(intArgs);
+  var hash = intArgs[0];
+  var options = intArgs[1];
+  var cb = intArgs[2];
+  var item = createItem(hash);
   var params = {
       Item : item
     , TableName : this.tableName
@@ -68,22 +77,24 @@ Dynamo.prototype.create = function(hash, options, cb){
 
 
 
-Dynamo.prototype.find = function(hash, fieldMask, options, cb){
+Dynamo.prototype.find = function(){
 //TODO: fix the arguments, use intArgs
-  var intArgs = common.process4DbArguments(arguments);
-  var item = createItem(intArgs[0]);
+  var intArgs = utils.resolve4Arguments(arguments);
+  var hash = intArgs[0];
+  var fieldMask = intArgs[1];
+  var options = intArgs[2];
+  var cb = intArgs[3];
   var query = formatQuery(hash);
   var params = {
-      IndexName: options.index
-    , TableName: this.tableName
+      TableName: this.tableName
     , KeyConditionExpression: query.expression
     , ExpressionAttributeValues: query.attributes
   };
 
   if (options.limit) params.Limit = options.limit;
 
-  console.log('params to dynamo:');
-  console.log(params);
+  //console.log('params to dynamo:');
+  //console.log(params);
 
   this.db.query(params, function(err, data){
     console.log(err);
@@ -260,9 +271,9 @@ function formatQuery(hash){
     }
 
   }
-  console.log('EXPRESSION::::::')
-  console.log(expression);
-  console.log('ATTRIBUTES::::::');
-  console.log(attributes);
+  //console.log('EXPRESSION::::::')
+  //console.log(expression);
+  //console.log('ATTRIBUTES::::::');
+  //console.log(attributes);
   return {expression:expression, attributes:attributes};
 }
