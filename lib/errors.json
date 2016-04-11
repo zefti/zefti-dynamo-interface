@@ -1,0 +1,54 @@
+{
+  "errorCodes": {
+    "56f6e1abec4ad22804a064f2": {
+      "eMsg": "No hash or unpopulated hash for create",
+      "description": "No hash or unpopulated hash for create",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f3": {
+      "eMsg": "_id is required to create",
+      "description": "_id is required to create",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f4": {
+      "eMsg": "No hash or unpopulated hash for upsert",
+      "description": "No hash or unpopulated hash for upsert",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f5": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f6": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f7": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f8": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064f9": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064fa": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    },
+    "56f6e1abec4ad22804a064fb": {
+      "eMsg": "tbd",
+      "description": "",
+      "sev": "s3"
+    }
+  }
+}
