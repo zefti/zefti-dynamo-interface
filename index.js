@@ -1,23 +1,15 @@
 var utils = require('zefti-utils');
+var async = require('async');
 var uuid = require('node-uuid');
 var randtoken = require('rand-token');
 var errors = require('./lib/errors.json');
 var errorHandler = require('zefti-error-handler');
 errorHandler.addErrors(errors);
 
+/*
+ * We will make the requirement that all tables must have a _id field
+ */
 
-/*  EXAMPLE QUERY
-var params = {
-    IndexName : 'recipient-ts-index'
-  , TableName : this.tableName
-  , KeyConditionExpression : 'recipient = :xyz'
-  , ExpressionAttributeValues : {
-    ":xyz" : {
-      S : "4dff4ea340f0a823f15d3f4f01ab62eae0e5da579ccb851f8db9dfe84c58b2b37b89903a740e1ee172da793a6e79d560e5f7f9bd058a12a280433ed6fa46510a"
-    }
-  }
-};
-*/
 
 
 /*
@@ -83,30 +75,6 @@ var params = {
  */
 
 
-function formatKey(hash){
-  var item = {};
-  for (var key in hash) {
-    //TODO: this doesn't work for 0, empty string, etc.  Create and use utils.exists
-    if (hash[key]) {
-      var someKey = {};
-      var type = typeMap[utils.type(hash[key])];
-      /*
-      console.log('in formatKey::');
-      console.log(hash[key]);
-      console.log(type);
-      console.log(utils.type(hash[key]))
-      if (!type && utils.type(hash[key]) === 'array') {
-        if (utils.type(hash[key][0]) === 'string') type = 'SS';
-        if (utils.type(hash[key][0]) === 'number') type = 'NS';
-      }
-      */
-      someKey[type] = hash[key].toString();
-      item[key] = someKey;
-    }
-  }
-  return item;
-}
-
 var typeMap = {
     string : 'S'
   , number : 'N'
@@ -118,6 +86,325 @@ var arrTypeMap = {
     string : 'SS'
   , number : 'NS'
 };
+
+var expressionMap = {
+    '$gt' : ' > :'
+  , '$lt' : ' < :'
+  , '$gte' : ' >= :'
+  , '$lte' : ' <= :'
+};
+
+var returnedStateMap = {
+    new : 'ALL_NEW'
+  , old : 'ALL_OLD'
+};
+
+var updateMap = {
+    '$del' : 'REMOVE'
+  , '$push' : 'ADD'
+  , '$pull' : 'DELETE'
+  , '$inc' : 'ADD'
+  , '$dec' : 'ADD'
+};
+
+var findMap = {
+    '$gt'  : '>'
+  , '$gte' : '>='
+  , '$lt'  : '<'
+  , '$lte' : '<='
+  , '$begins' : 'begins_with'
+};
+
+
+
+var Dynamo = function(db, options){
+  this.db = db;
+  if (options.tableName) this.tableName = options.tableName;
+  return this;
+};
+
+
+Dynamo.prototype.info = function(cb){
+  this.db.describeTable({TableName:this.tableName}, function(err, result){
+    cb(err, result);
+  });
+};
+
+Dynamo.prototype.create = function(){
+  var args = utils.resolve3Arguments(arguments);
+  var hash = args[0];
+  var options = args[1];
+  var cb = args[2];
+  var item = formatKey(hash);
+  var params = {
+      Item : item
+    , TableName : this.tableName
+    , ConditionExpression : 'attribute_not_exists(#I)'
+    , ExpressionAttributeNames : {"#I":"_id"}
+  };
+  if (Object.keys(hash).length === 0) return cb({errCode:'56f6e1abec4ad22804a064f2'});
+  if (!hash._id ) return cb({errCode:'56f6e1abec4ad22804a064f3'});
+  //console.log(params);
+  this.db.putItem(params, function(err, data) {
+    return cb(err, data);
+  });
+};
+
+
+
+Dynamo.prototype.find = function(){
+//TODO: fix the arguments, use intArgs
+  var self = this;
+  var intArgs = utils.resolve4Arguments(arguments);
+  var hash = intArgs[0];
+  var fieldMask = intArgs[1];
+  var options = intArgs[2];
+  var cb = intArgs[3];
+  var query = formatQuery(hash);
+  //console.log('QUERY::::::');
+  //console.log(query);
+
+  var params = {
+      TableName: this.tableName
+    , KeyConditionExpression: query.expression
+    , ExpressionAttributeValues: query.values
+    , ExpressionAttributeNames : query.names
+    , IndexVariables : query.indexVariables
+  };
+
+  if (options.$limit) params.Limit = options.$limit;
+  params.ScanIndexForward = false;
+  if (options.$sort && options.$sort[query.indexVariables.range] === -1) params.ScanIndexForward = true;
+
+  //console.log('FIND PARAMS TO DYNAMO::::::');
+  //console.log(params);
+
+
+  async.waterfall([
+    function(cb) {
+      if (!options.last_item) return cb(null, null);
+      var params2 = { Key : formatKey({_id:options.last_item}), TableName :self.tableName};
+      self.db.getItem(params2, function(err, result){
+        if (err) return cb(err);
+        var exclusiveStartKey = {};
+        if (!result || !result.Item._id) return cb({errCode:'56f6e1abec4ad22804a064f5'}, null);
+        exclusiveStartKey._id = result.Item._id;
+        params.IndexVariables.equality.forEach(function(field){
+          exclusiveStartKey[field] = result.Item[field];
+        });
+        if (params.IndexVariables.range) exclusiveStartKey[params.IndexVariables.range] = result.Item[params.IndexVariables.range];
+        cb(null, exclusiveStartKey);
+      })
+    },
+    function(exclusiveStartKey, cb){
+      if (exclusiveStartKey) params.ExclusiveStartKey = exclusiveStartKey;
+      self.db.query(params, function(err, data){
+        return cb(err, data)
+      });
+    }],
+    function(err, data){
+      if (err) return cb(err, null);
+      var last_item = null;
+      if (data.LastEvaluatedKey) last_item = data.LastEvaluatedKey._id[Object.keys(data.LastEvaluatedKey._id)[0]];
+      cb (err, cleanData(data), last_item);
+    }
+  );
+};
+
+Dynamo.prototype.findAll = function(cb){
+  var params = {
+    TableName: this.tableName
+  };
+  this.db.scan(params, function(err, results) {
+    return cb(err, cleanData(results));
+  })
+};
+
+
+Dynamo.prototype.findAndModify = function(hash, sort, update, options, cb){
+
+};
+
+
+Dynamo.prototype.findById = function(){
+  var args = utils.resolve4Arguments(arguments);
+  var id = args[0];
+  var hash = {_id:id};
+  var fieldMask = args[1];
+  var options = args[2];
+  var cb = args[3];
+
+  var params = {
+      Key : formatKey(hash)
+    , TableName : this.tableName
+  };
+
+  this.db.getItem(params, function(err, result){
+    if (err) return cb(err, null);
+    return cb(null, cleanData(result));
+  });
+};
+
+Dynamo.prototype.findByIdMulti = function(ids, fieldMask, options, cb){
+
+};
+
+//TODO: write unit tests for this one
+Dynamo.prototype.upsert = function(){
+  var intArgs = utils.resolve3Arguments(arguments);
+  var hash = intArgs[0];
+  var options = intArgs[1];
+  var cb = intArgs[2];
+  var item = formatKey(hash);
+  var params = {
+      Item : item
+    , TableName : this.tableName
+  };
+  if (Object.keys(hash).length === 0) return cb({errCode:'56f6e1abec4ad22804a064f2'});
+  this.db.putItem(params, function(err, data) {
+    return cb(err, data);
+  });
+};
+
+Dynamo.prototype.update = function(){
+  var args = utils.resolve4Arguments(arguments);
+  var item = args[0];
+  var update = args[1];
+  var options = args[2];
+  var cb = args[3];
+  var itemObj = formatKey(item);
+  var updateObj = formatUpdateExpression(update);
+
+  var params = {
+      Key : itemObj
+    , TableName : this.tableName
+    , UpdateExpression : updateObj.expression
+    , ExpressionAttributeNames : updateObj.names
+    , ReturnValues : defineReturnState(options)
+  };
+  if (Object.keys(updateObj.values).length !== 0) params.ExpressionAttributeValues = updateObj.values;
+
+  this.db.updateItem(params, function(err, result){
+    if (err) console.log(err);
+    return cb(err, cleanData(result));
+  });
+};
+
+Dynamo.prototype.updateById = function(id, update, options, cb){
+
+};
+
+Dynamo.prototype.remove = function(hash, options, cb){
+  var intArgs = utils.resolve3Arguments(arguments);
+  var hash = intArgs[0];
+  var options = intArgs[1];
+  var cb = intArgs[2];
+  var key = formatKey(hash);
+  var params = {
+      Key : key
+    , TableName : this.tableName
+  };
+  this.db.deleteItem(params, function(err, data) {
+    return cb(err, data);
+  });
+};
+
+Dynamo.prototype.removeById = function(id, options, cb){
+
+};
+
+Dynamo.prototype.removeFields = function(hash, update, options, cb){
+
+};
+
+Dynamo.prototype.removeFieldsById = function(id, fields, options, cb){
+
+};
+
+Dynamo.prototype.addToSet = function(hash, update, options, cb){
+
+};
+
+Dynamo.prototype.addToSetById = function(id, update, options, cb){
+
+};
+
+Dynamo.prototype.removeFromSet = function(hash, update, options, cb){
+
+};
+
+Dynamo.prototype.removeFromSetById = function(id, update, options, cb){
+
+};
+
+Dynamo.prototype.removeAll= function(cb){
+  //console.log('calling removeAll')
+  var self = this;
+  var deletedItems = [];
+  var params = {
+    TableName: this.tableName
+  };
+  this.db.scan(params, function(err, results){
+    if (!results || results.length === 0 || !results.Items || results.Items.length === 0) return cb(null, []);
+    var params = {RequestItems:{}};
+    params.RequestItems[self.tableName] = [];
+    results.Items.forEach(function(item){
+      var x = {DeleteRequest:{Key:{_id:item._id}}};
+      params.RequestItems[self.tableName].push(x);
+      deletedItems.push(item);
+    });
+    self.db.batchWriteItem(params, function(err, result){
+      if (err) return cb(err);
+      return cb(null, deletedItems);
+    });
+  });
+};
+
+Dynamo.prototype.expire = function(hash, options, cb){
+
+};
+
+Dynamo.prototype.expireById = function(id, options, cb){
+
+};
+
+Dynamo.prototype.getNewId = function(options){
+
+};
+
+
+
+
+module.exports = Dynamo;
+
+
+
+
+/*
+ * helper functions
+*/
+
+function formatKey(hash){
+  var item = {};
+  for (var key in hash) {
+    //TODO: this doesn't work for 0, empty string, etc.  Create and use utils.exists
+    if (hash[key]) {
+      var someKey = {};
+      var type = typeMap[utils.type(hash[key])];
+       if (!type && utils.type(hash[key]) === 'array') {
+         if (utils.type(hash[key][0]) === 'string') type = 'SS';
+         if (utils.type(hash[key][0]) === 'number') type = 'NS';
+         someKey[type] = hash[key];
+       } else {
+         someKey[type] = hash[key].toString();
+       }
+      item[key] = someKey;
+    }
+  }
+  return item;
+}
+
+
 
 function defineReturnState(hash) {
   return returnedStateMap[hash.returnedState] || 'ALL_NEW';
@@ -287,125 +574,17 @@ function cleanData(data){
 
 }
 
-
-
-
-
-
-
-
-var expressionMap = {
-    "$gt" : " > :"
-  , "$lt" : " < :"
-  , "$gte" : " >= :"
-  , "$lte" : " <= :"
-};
-
-var returnedStateMap = {
-    new : 'ALL_NEW'
-  , old : 'ALL_OLD'
-};
-
-var updateMap = {
-    '$del' : 'REMOVE'
-  , '$push' : 'ADD'
-  , '$pull' : 'DELETE'
-  , '$inc' : 'ADD'
-  , '$dec' : 'ADD'
-};
-
-
-
-
-
-
-
-var Dynamo = function(db, options){
-  this.db = db;
-  if (options.tableName) this.tableName = options.tableName;
-  return this;
-};
-
-
-Dynamo.prototype.info = function(cb){
-  this.db.describeTable({TableName:this.tableName}, function(err, result){
-    cb(err, result);
-  });
-};
-
-Dynamo.prototype.create = function(){
-  var args = utils.resolve3Arguments(arguments);
-  var hash = args[0];
-  var options = args[1];
-  var cb = args[2];
-  var item = formatKey(hash);
-  var params = {
-      Item : item
-    , TableName : this.tableName
-    , ConditionExpression : 'attribute_not_exists(#I)'
-    , ExpressionAttributeNames : {"#I":"_id"}
-  };
-  if (Object.keys(hash).length === 0) return cb({errCode:'56f6e1abec4ad22804a064f2'});
-  if (!hash._id ) return cb({errCode:'56f6e1abec4ad22804a064f3'});
-  this.db.putItem(params, function(err, data) {
-    return cb(err, data);
-  });
-};
-
-
-
-Dynamo.prototype.find = function(){
-//TODO: fix the arguments, use intArgs
-  var intArgs = utils.resolve4Arguments(arguments);
-  var hash = intArgs[0];
-  var fieldMask = intArgs[1];
-  var options = intArgs[2];
-  var cb = intArgs[3];
-  var query = formatQuery2(hash);
-
-  var params = {
-      TableName: this.tableName
-    , KeyConditionExpression: query.expression
-    , ExpressionAttributeValues: query.values
-    , ExpressionAttributeNames : query.names
-    , IndexName : query.indexName
-  };
-
-  if (options.limit) params.Limit = options.limit;
-  //if (options.indexName) params.IndexName = options.indexName;
-
-  console.log('PARAMS TO DYNAMO::::::');
-  console.log(params);
-
-  this.db.query(params, function(err, data){
-    if (err) console.log(err);
-    if (err) return cb(err, null);
-    cb(err, cleanData(data));
-  });
-};
-
-
-
-
-/*  EXAMPLE QUERY
-var params = {
-  IndexName : 'recipient-ts-index'
-  , TableName : this.tableName
-  , KeyConditionExpression : 'recipient = :xyz'
-  , ExpressionAttributeValues : {
-    ":xyz" : {
-      S : "4dff4ea340f0a823f15d3f4f01ab62eae0e5da579ccb851f8db9dfe84c58b2b37b89903a740e1ee172da793a6e79d560e5f7f9bd058a12a280433ed6fa46510a"
-    }
-  }
-};
- */
-
-function formatQuery2(hash){
+function formatQuery(hash){
   var baseExpression = '';
   var rangeExpression = '';
   var beginExpression = '';
   var startBetweenExpression = '';
   var betweenExpression = '';
+  var betweenName = '';
+  var betweenOperator = null;
+  var betweenValue1 = null;
+  var betweenValue2 = null;
+  var betweenKey = null;
   var indexVariables = {equality:[]};
   var values = {};
   var names = {};
@@ -434,8 +613,26 @@ function formatQuery2(hash){
       if (!rangeExpression) {
         rangeExpression = '#' + token1 + ' ' + operator + ' :' + token2;
         startBetweenExpression = '#' + token1 + ' BETWEEN ' + ':' + token2;
+        betweenName = ':' + token2;
+        betweenOperator = operator;
+        betweenKey = key;
+        betweenValue1 = hash[key][Object.keys(hash[key])[0]];
       } else {
         betweenExpression = startBetweenExpression + ' AND ' + ':' + token2;
+        if (betweenOperator === '>') {
+          values[betweenName][typeMap[utils.type(hash[betweenKey][Object.keys(hash[betweenKey])[0]])]] = String(betweenValue1 +.00000001);
+        }
+        if (betweenOperator === '<') {
+          values[betweenName][typeMap[utils.type(hash[betweenKey][Object.keys(hash[betweenKey])[0]])]] = String(betweenValue1 -.00000001);
+        }
+
+        if (operator === '>') {
+          values[':' + token2][typeMap[utils.type(hash[key][Object.keys(hash[key])[0]])]] = String(hash[key][Object.keys(hash[key])[0]] +.00000001);
+        }
+        if (operator === '<') {
+          values[':' + token2][typeMap[utils.type(hash[key][Object.keys(hash[key])[0]])]] = String(hash[key][Object.keys(hash[key])[0]] -.00000001);
+        }
+
         delete names['#' + token1];
       }
     }
@@ -443,9 +640,7 @@ function formatQuery2(hash){
   if (rangeExpression && !betweenExpression) baseExpression = baseExpression + ' AND ' + rangeExpression;
   if (betweenExpression) baseExpression = baseExpression + ' AND ' + betweenExpression;
   if (beginExpression) baseExpression = baseExpression + ' AND ' + beginExpression;
-  console.log('INDEX NAME::')
-  console.log(getIndexName(indexVariables));
-  return {expression:baseExpression, values:values, names:names, indexName:getIndexName(indexVariables) };
+  return {expression:baseExpression, values:values, names:names, indexVariables:indexVariables};
 }
 
 function getIndexName(hash){
@@ -459,192 +654,7 @@ function getIndexName(hash){
   return indexName;
 }
 
-var findMap = {
-    '$gt'  : '>'
-  , '$gte' : '>='
-  , '$lt'  : '<'
-  , '$lte' : '<='
-  , '$begins' : 'begins_with'
-};
-
-
-function formatQuery(hash){
-  var expression = "";
-  var attributes = {};
-  var i = 0;
-  for (var key in hash) {
-    i++;
-    if (i>1) expression += ' AND ';
-    expression += key;
-
-    if (utils.type(hash[key]) === 'string' || utils.type(hash[key]) === 'number') {
-      expression +=  ' = :';
-      expression += key;
-      attributes[':'+key] = {};
-      attributes[':'+key][typeMap[utils.type(hash[key])]] = hash[key].toString();
-    } else {
-      var counter = 0;
-      var values = {};
-      for (var key2 in hash[key]) {
-        counter++;
-        values['n' + counter] = hash[key][key2];
-      }
-      if(counter === 1) {
-        expression += expressionMap[key2];
-        expression += key;
-        attributes[':'+key] = {};
-        attributes[':'+key][typeMap[utils.type(hash[key][key2])]] = values.n1.toString();
-      } else if (counter === 2) {
-        var x = randtoken.generate(8);
-        var y = randtoken.generate(8);
-        expression += ' BETWEEN :' + x;
-        expression += ' AND :' + y;
-        attributes[':'+x] = {};
-        attributes[':'+x][typeMap[utils.type(hash[key][key2])]] = values.n1.toString();
-        attributes[':'+y] = {};
-        attributes[':'+y][typeMap[utils.type(hash[key][key2])]] = values.n2.toString();
-      }
-    }
-
-  }
-  //console.log('EXPRESSION::::::')
-  //console.log(expression);
-  //console.log('ATTRIBUTES::::::');
-  //console.log(attributes);
-  return {expression:expression, attributes:attributes};
-}
-
-
-Dynamo.prototype.findAndModify = function(hash, sort, update, options, cb){
-
-};
-
-
-Dynamo.prototype.findById = function(){
-  var args = utils.resolve4Arguments(arguments);
-  var hash = args[0];
-  var fieldMask = args[1];
-  var options = args[2];
-  var cb = args[3];
-
-  var params = {
-      Key : formatKey(hash)
-    , TableName : this.tableName
-  };
-
-  this.db.getItem(params, function(err, result){
-    if (err) return cb(err, null);
-    return cb(null, cleanData(result));
-  });
-};
-
-Dynamo.prototype.findByIdMulti = function(ids, fieldMask, options, cb){
-
-};
-
-//TODO: write unit tests for this one
-Dynamo.prototype.upsert = function(){
-  var intArgs = utils.resolve3Arguments(arguments);
-  var hash = intArgs[0];
-  var options = intArgs[1];
-  var cb = intArgs[2];
-  var item = formatKey(hash);
-  var params = {
-      Item : item
-    , TableName : this.tableName
-  };
-  if (Object.keys(hash).length === 0) return cb({errCode:'56f6e1abec4ad22804a064f2'});
-  this.db.putItem(params, function(err, data) {
-    return cb(err, data);
-  });
-};
-
-Dynamo.prototype.update = function(){
-  var args = utils.resolve4Arguments(arguments);
-  var item = args[0];
-  var update = args[1];
-  var options = args[2];
-  var cb = args[3];
-  var itemObj = formatKey(item);
-  var updateObj = formatUpdateExpression(update);
-
-  var params = {
-      Key : itemObj
-    , TableName : this.tableName
-    , UpdateExpression : updateObj.expression
-    , ExpressionAttributeNames : updateObj.names
-    , ReturnValues : defineReturnState(options)
-  };
-  if (Object.keys(updateObj.values).length !== 0) params.ExpressionAttributeValues = updateObj.values;
-
-  //console.log(params);
-
-  this.db.updateItem(params, function(err, result){
-    if (err) console.log(err);
-    return cb(err, cleanData(result));
-  });
-};
-
-Dynamo.prototype.updateById = function(id, update, options, cb){
-
-};
-
-Dynamo.prototype.remove = function(hash, options, cb){
-  var intArgs = utils.resolve3Arguments(arguments);
-  var hash = intArgs[0];
-  var options = intArgs[1];
-  var cb = intArgs[2];
-  var key = formatKey(hash);
-  var params = {
-      Key : key
-    , TableName : this.tableName
-  };
-  this.db.deleteItem(params, function(err, data) {
-    return cb(err, data);
-  });
-};
-
-Dynamo.prototype.removeById = function(id, options, cb){
-
-};
-
-Dynamo.prototype.removeFields = function(hash, update, options, cb){
-
-};
-
-Dynamo.prototype.removeFieldsById = function(id, fields, options, cb){
-
-};
-
-Dynamo.prototype.addToSet = function(hash, update, options, cb){
-
-};
-
-Dynamo.prototype.addToSetById = function(id, update, options, cb){
-
-};
-
-Dynamo.prototype.removeFromSet = function(hash, update, options, cb){
-
-};
-
-Dynamo.prototype.removeFromSetById = function(id, update, options, cb){
-
-};
-
-Dynamo.prototype.expire = function(hash, options, cb){
-
-};
-
-Dynamo.prototype.expireById = function(id, options, cb){
-
-};
-
-Dynamo.prototype.getNewId = function(options){
-
-};
 
 
 
 
-module.exports = Dynamo;

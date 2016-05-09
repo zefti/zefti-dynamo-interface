@@ -16,8 +16,8 @@
       "sev": "s3"
     },
     "56f6e1abec4ad22804a064f5": {
-      "eMsg": "tbd",
-      "description": "",
+      "eMsg": "Corresponding item for exclusive start key not found",
+      "description": "Corresponding item for exclusive start key not found",
       "sev": "s3"
     },
     "56f6e1abec4ad22804a064f6": {
